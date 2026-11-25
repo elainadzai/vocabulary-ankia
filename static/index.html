@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Anki Card Maker</title>
+<style>
+:root{--bg:#0b1120;--panel:#111a2e;--card:#162036;--line:#2a3a5a;--tx:#f1f5f9;--mut:#94a3b8;--acc:#fbbf24;--ok:#4ade80;--bad:#f87171}
+@media(prefers-color-scheme:light){:root[data-auto]{}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 'Segoe UI',Arial,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:18px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--mut);margin-bottom:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+label{display:block;font-size:12px;color:var(--mut);margin-bottom:3px}
+input,select,textarea{width:100%;background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}
+textarea{min-height:120px;resize:vertical}
+button{background:var(--acc);color:#0b1120;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer}
+button.sec{background:var(--card);color:var(--tx);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:wait}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+#msg{color:var(--mut);font-size:13px}.err{color:var(--bad)!important}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:900px}
+th,td{border:1px solid var(--line);padding:0;font-size:13px}th{background:var(--card);padding:6px;text-align:left;color:var(--mut)}
+td input{border:0;border-radius:0;background:transparent;padding:6px}
+tr.sel td{background:#1b2a4a}.x{cursor:pointer;text-align:center;color:var(--bad);padding:0 8px}
+.prev{display:flex;flex-direction:column;align-items:center;background:#0f172a;border:1px solid var(--line);border-radius:14px;padding:22px;text-align:center}
+.meaning{font-size:26px;font-weight:700}.pos{display:inline-block;color:var(--acc);border:1px solid var(--acc);border-radius:99px;padding:0 10px;font-size:13px;margin:4px 0 12px}
+.row{display:flex;gap:8px;align-items:center;justify-content:center}
+#pin{font-family:'Courier New',monospace;font-size:26px;text-align:center;caret-color:var(--acc);width:auto;max-width:100%}
+#pin.good{color:var(--ok)}#pin.bad{color:var(--bad)}
+.hint{font-size:22px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer}
+.back{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;width:100%}
+.w{font-size:32px;font-weight:700;color:var(--ok)}.ipa,.exvi,.syn{color:var(--mut)}.ex{font-style:italic;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>Anki Card Maker</h1>
+<div class="sub">Nhập từ / cụm / cấu trúc → AI điền các cột còn lại → sửa → xuất .apkg để import vào Anki.</div>
+
+<div class="panel">
+  <label>Danh sách (mỗi dòng 1 mục). Dòng có TAB sẽ được hiểu là hàng đầy đủ: word, meaning, pos, example, example_vi, ipa, synonym, antonym, tag.</label>
+  <textarea id="inp" placeholder="formation&#10;be likely to V&#10;in the long run"></textarea>
+  <div class="grid" style="margin-top:10px">
+    <div><label>AI</label><select id="prov"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select></div>
+    <div><label>Model (sửa nếu tài khoản bạn dùng model khác)</label><input id="model" value="gemini-2.5-flash"></div>
+    <div><label>API key (chỉ giữ trong bộ nhớ trang, không lưu)</label><input id="key" type="password" autocomplete="off"></div>
+    <div><label>Tên bộ thẻ (dùng :: để chia nhánh)</label><input id="deck" value="IELTS::Cambridge::CAM 12"></div>
+    <div><label>Tag mặc định (vd CAM 12_101)</label><input id="tag"></div>
+  </div>
+  <div class="bar"><button id="go">✨ AI điền thẻ</button><button class="sec" id="add">+ Thêm hàng trống</button><span id="msg"></span></div>
+</div>
+
+<div class="panel">
+  <div class="tw"><table><thead><tr><th>#</th><th>Word</th><th>Meaning</th><th>POS</th><th>Example</th><th>Example VI</th><th>IPA</th><th>Synonym</th><th>Antonym</th><th>Tag</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="bar"><button id="exp">⬇ Xuất .apkg</button><span id="cnt" class="sub" style="margin:0"></span></div>
+</div>
+
+<div class="panel">
+  <div class="sub" style="margin-bottom:8px">Xem trước thẻ đang chọn (bấm vào một hàng trong bảng)</div>
+  <div class="prev" id="prev"></div>
+</div>
+</main>
+<script>
+const COLS=["word","meaning","pos","example","example_vi","ipa","synonym","antonym","tag"];
+let rows=[],sel=-1,flipped=false;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const say=(t,e)=>{$("msg").textContent=t;$("msg").className=e?"err":""};
+$("prov").onchange=()=>{$("model").value=$("prov").value==="openai"?"gpt-4o-mini":"gemini-2.5-flash"};
+
+function render(){
+  $("tb").innerHTML=rows.map((r,i)=>`<tr data-i="${i}" class="${i===sel?"sel":""}"><td style="padding:6px">${i+1}</td>`+
+   COLS.map(c=>`<td><input data-i="${i}" data-c="${c}" value="${esc(r[c])}"></td>`).join("")+
+   `<td class="x" data-del="${i}">✕</td></tr>`).join("");
+  $("cnt").textContent=rows.length+" thẻ";
+  preview();
+}
+$("tb").addEventListener("input",e=>{const t=e.target;if(t.dataset.c){rows[t.dataset.i][t.dataset.c]=t.value;preview(true)}});
+$("tb").addEventListener("click",e=>{
+  if(e.target.dataset.del!==undefined){rows.splice(+e.target.dataset.del,1);sel=Math.min(sel,rows.length-1);render();return}
+  const tr=e.target.closest("tr");if(tr){sel=+tr.dataset.i;flipped=false;[...$("tb").children].forEach(x=>x.classList.toggle("sel",+x.dataset.i===sel));preview()}
+});
+$("add").onclick=()=>{rows.push(Object.fromEntries(COLS.map(c=>[c,c==="tag"?$("tag").value:""])));sel=rows.length-1;render()};
+
+function preview(keepInput){
+  const r=rows[sel];const p=$("prev");
+  if(!r){p.innerHTML='<span class="sub">Chưa có thẻ.</span>';return}
+  const w=r.word||"";
+  p.innerHTML=`<div class="meaning">${esc(r.meaning)||"(chưa có nghĩa)"}</div>${r.pos?`<div class="pos">${esc(r.pos)}</div>`:""}
+  <div class="row"><input id="pin" autocomplete="off" spellcheck="false" style="width:${Math.max(w.length,3)+2}ch"><span class="hint" id="hb">💡</span></div>
+  <div class="row" style="margin-top:12px"><button class="sec" id="flip">${flipped?"Ẩn mặt sau":"Lật thẻ"}</button></div>
+  ${flipped?`<div class="back"><div class="w">${esc(w)}</div>${r.ipa?`<div class="ipa">/${esc(r.ipa.replace(/^\/|\/$/g,""))}/</div>`:""}
+  ${r.example?`<div class="ex">${esc(r.example)}</div>`:""}${r.example_vi?`<div class="exvi">${esc(r.example_vi)}</div>`:""}
+  ${r.synonym?`<div class="syn"><b>Syn:</b> ${esc(r.synonym)}</div>`:""}${r.antonym?`<div class="syn"><b>Ant:</b> ${esc(r.antonym)}</div>`:""}</div>`:""}`;
+  const pin=$("pin"),chk=()=>{const v=pin.value;pin.className=!v?"":w.toLowerCase().startsWith(v.toLowerCase())?"good":"bad"};
+  pin.oninput=chk;
+  $("hb").onclick=()=>{let v=pin.value,n=0;while(n<v.length&&n<w.length&&v[n].toLowerCase()===w[n].toLowerCase())n++;pin.value=w.slice(0,Math.min(n+1,w.length));chk();pin.focus()};
+  $("flip").onclick=()=>{flipped=!flipped;preview()};
+}
+
+function parseInput(){
+  const out=[],plain=[];
+  $("inp").value.split(/\r?\n/).forEach(l=>{
+    if(!l.trim())return;
+    if(l.includes("\t")){const p=l.split("\t");if(/^word$/i.test(p[0].trim()))return;const o={};COLS.forEach((c,i)=>o[c]=(p[i]||"").trim());if(!o.tag)o.tag=$("tag").value;out.push(o)}
+    else plain.push(l.trim());
+  });
+  return{full:out,plain};
+}
+
+$("go").onclick=async()=>{
+  const{full,plain}=parseInput();
+  if(!full.length&&!plain.length)return say("Hãy nhập ít nhất 1 mục.",1);
+  const added=[...full];
+  if(plain.length){
+    if(!$("key").value.trim())return say("Cần API key để AI điền thẻ.",1);
+    $("go").disabled=true;
+    try{
+      for(let i=0;i<plain.length;i+=25){
+        say(`AI đang xử lý ${Math.min(i+25,plain.length)}/${plain.length}…`);
+        const res=await fetch("/api/fill",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({provider:$("prov").value,model:$("model").value.trim(),api_key:$("key").value.trim(),items:plain.slice(i,i+25)})});
+        const j=await res.json().catch(()=>({}));
+        if(!res.ok)throw new Error(j.detail||("Lỗi "+res.status));
+        j.rows.forEach(r=>{r.tag=$("tag").value;added.push(r)});
+      }
+    }catch(e){say(e.message,1);$("go").disabled=false;
+      if(added.length){rows.push(...added);render()}return}
+    $("go").disabled=false;
+  }
+  rows.push(...added);sel=rows.length-added.length;flipped=false;$("inp").value="";render();
+  say(`Đã thêm ${added.length} thẻ. Hãy soát lại IPA, nghĩa và ví dụ trước khi xuất.`);
+};
+
+$("exp").onclick=async()=>{
+  const ok=rows.filter(r=>(r.word||"").trim());
+  if(!ok.length)return say("Chưa có thẻ để xuất.",1);
+  const res=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deck:$("deck").value,rows:ok})});
+  if(!res.ok){const j=await res.json().catch(()=>({}));return say(j.detail||"Xuất lỗi",1)}
+  const b=await res.blob(),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="my_deck.apkg";a.click();
+  say(`Đã xuất ${ok.length} thẻ. Bấm đúp file .apkg để import vào Anki.`);
+};
+render();
+</script>
+</body>
+</html>
