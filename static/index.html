@@ -32,6 +32,8 @@ tr.sel td{background:#1b2a4a}.x{cursor:pointer;text-align:center;color:var(--bad
 .hint{font-size:22px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer}
 .back{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;width:100%}
 .w{font-size:32px;font-weight:700;color:var(--ok)}.ipa,.exvi,.syn{color:var(--mut)}.ex{font-style:italic;margin-top:8px}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:14px;text-align:center;color:var(--mut);margin-top:10px;cursor:pointer}
+#drop.over{border-color:var(--acc);color:var(--acc);background:#1b2a4a}
 </style>
 </head>
 <body>
@@ -42,6 +44,8 @@ tr.sel td{background:#1b2a4a}.x{cursor:pointer;text-align:center;color:var(--bad
 <div class="panel">
   <label>Danh sách (mỗi dòng 1 mục). Dòng có TAB sẽ được hiểu là hàng đầy đủ: word, meaning, pos, example, example_vi, ipa, synonym, antonym, tag.</label>
   <textarea id="inp" placeholder="formation&#10;be likely to V&#10;in the long run"></textarea>
+  <div id="drop">📂 Bấm để chọn file hoặc kéo thả file vào đây (.txt, .tsv, .csv, UTF-8)</div>
+  <input type="file" id="file" accept=".txt,.tsv,.csv,text/plain,text/csv,text/tab-separated-values" multiple hidden>
   <div class="grid" style="margin-top:10px">
     <div><label>AI</label><select id="prov"><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select></div>
     <div><label>Model (sửa nếu tài khoản bạn dùng model khác)</label><input id="model" value="gemini-2.5-flash"></div>
@@ -49,7 +53,7 @@ tr.sel td{background:#1b2a4a}.x{cursor:pointer;text-align:center;color:var(--bad
     <div><label>Tên bộ thẻ (dùng :: để chia nhánh)</label><input id="deck" value="IELTS::Cambridge::CAM 12"></div>
     <div><label>Tag mặc định (vd CAM 12_101)</label><input id="tag"></div>
   </div>
-  <div class="bar"><button id="go">✨ AI điền thẻ</button><button class="sec" id="add">+ Thêm hàng trống</button><span id="msg"></span></div>
+  <div class="bar"><button id="go">✨ AI điền thẻ</button><button class="sec" id="load">📂 Tải file</button><button class="sec" id="add">+ Thêm hàng trống</button><span id="msg"></span></div>
 </div>
 
 <div class="panel">
@@ -142,6 +146,50 @@ $("exp").onclick=async()=>{
   const b=await res.blob(),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="my_deck.apkg";a.click();
   say(`Đã xuất ${ok.length} thẻ. Bấm đúp file .apkg để import vào Anki.`);
 };
+
+/* ---- Tải file ---- */
+function parseCSV(t){
+  const rows=[];let row=[],f="",q=false;
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(q){if(c==='"'){if(t[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+    else if(c==='"')q=true;
+    else if(c===","){row.push(f);f=""}
+    else if(c==="\n"){row.push(f);rows.push(row);row=[];f=""}
+    else if(c!=="\r")f+=c}
+  if(f||row.length){row.push(f);rows.push(row)}
+  return rows;
+}
+function fileToLines(name,text){
+  text=text.replace(/^\uFEFF/,"");
+  const isCsv=/\.csv$/i.test(name);
+  let table;
+  if(isCsv)table=parseCSV(text);
+  else table=text.split(/\r?\n/).map(l=>l.includes("\t")?l.split("\t"):[l]);
+  const lines=[];
+  table.forEach(p=>{
+    p=p.map(x=>(x||"").trim());
+    if(!p.some(Boolean))return;
+    if(/^word$/i.test(p[0]))return;
+    while(p.length&&!p[p.length-1])p.pop();
+    if(p.length<=1)lines.push(p[0]);              // chỉ có từ -> để AI điền
+    else lines.push(p.join("\t"));                // đã có cột -> giữ nguyên
+  });
+  return lines;
+}
+async function loadFiles(files){
+  let n=0;
+  for(const f of files){
+    if(/\.xlsx?$/i.test(f.name)){say("Chưa hỗ trợ Excel. Hãy lưu thành CSV UTF-8 rồi tải lại.",1);continue}
+    const lines=fileToLines(f.name,await f.text());
+    if(lines.length){const cur=$("inp").value.trimEnd();$("inp").value=(cur?cur+"\n":"")+lines.join("\n");n+=lines.length}
+  }
+  if(n)say(`Đã nạp ${n} dòng từ file. Bấm "✨ AI điền thẻ" để tiếp tục.`);
+}
+$("load").onclick=$("drop").onclick=()=>$("file").click();
+$("file").onchange=e=>{loadFiles([...e.target.files]);e.target.value=""};
+["dragenter","dragover"].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();$("drop").classList.add("over")}));
+["dragleave","drop"].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();$("drop").classList.remove("over")}));
+document.addEventListener("drop",e=>{if(e.dataTransfer&&e.dataTransfer.files.length)loadFiles([...e.dataTransfer.files])});
 render();
 </script>
 </body>
